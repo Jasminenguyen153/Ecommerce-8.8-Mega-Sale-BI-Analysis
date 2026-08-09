@@ -1,0 +1,2407 @@
+
+/*====================================================================
+ PROJECT: ECOMMERCE 8.8 MEGA SALE CAMPAIGN ANALYSIS
+ DATABASE: Ecommerce
+ PLATFORM: Microsoft SQL Server / SSMS
+ PURPOSE: BI / Data Analyst Portfolio Project
+====================================================================*/
+
+
+/*====================================================================
+ PART 1: CREATE DATABASE
+====================================================================*/
+
+CREATE DATABASE Ecommerce;
+GO
+
+USE Ecommerce;
+GO
+
+
+/*====================================================================
+ PART 2: CREATE TABLES
+====================================================================*/
+
+
+/*--------------------------------------------------------------------
+ 1. Categories
+--------------------------------------------------------------------*/
+
+CREATE TABLE Categories
+(
+    CategoryID INT NOT NULL,
+    CategoryName NVARCHAR(100) NOT NULL,
+
+    CONSTRAINT PK_Categories
+        PRIMARY KEY (CategoryID),
+
+    CONSTRAINT UQ_Categories_CategoryName
+        UNIQUE (CategoryName)
+);
+GO
+
+
+/*--------------------------------------------------------------------
+ 2. Products
+--------------------------------------------------------------------*/
+
+CREATE TABLE Products
+(
+    ProductID INT NOT NULL,
+    CategoryID INT NOT NULL,
+    ProductName NVARCHAR(150) NOT NULL,
+    BrandName NVARCHAR(100) NOT NULL,
+    CostPrice DECIMAL(12,2) NOT NULL,
+    RegularPrice DECIMAL(12,2) NOT NULL,
+
+    CONSTRAINT PK_Products
+        PRIMARY KEY (ProductID),
+
+    CONSTRAINT FK_Products_Categories
+        FOREIGN KEY (CategoryID)
+        REFERENCES Categories(CategoryID),
+
+    CONSTRAINT CK_Products_CostPrice
+        CHECK (CostPrice >= 0),
+
+    CONSTRAINT CK_Products_RegularPrice
+        CHECK (RegularPrice > 0)
+);
+GO
+
+
+/*--------------------------------------------------------------------
+ 3. Customers
+--------------------------------------------------------------------*/
+
+CREATE TABLE Customers
+(
+    CustomerID INT NOT NULL,
+    CustomerName NVARCHAR(100) NOT NULL,
+    Gender NVARCHAR(20) NULL,
+    StateName NVARCHAR(100) NOT NULL,
+    CustomerSegment NVARCHAR(30) NOT NULL,
+    RegisterDate DATE NOT NULL,
+
+    CONSTRAINT PK_Customers
+        PRIMARY KEY (CustomerID),
+
+    CONSTRAINT CK_Customers_Segment
+        CHECK (CustomerSegment IN (N'New', N'Regular', N'VIP'))
+);
+GO
+
+
+/*--------------------------------------------------------------------
+ 4. Channels
+--------------------------------------------------------------------*/
+
+CREATE TABLE Channels
+(
+    ChannelID INT NOT NULL,
+    ChannelName NVARCHAR(100) NOT NULL,
+    CommissionRate DECIMAL(5,2) NOT NULL,
+
+    CONSTRAINT PK_Channels
+        PRIMARY KEY (ChannelID),
+
+    CONSTRAINT UQ_Channels_ChannelName
+        UNIQUE (ChannelName),
+
+    CONSTRAINT CK_Channels_CommissionRate
+        CHECK (CommissionRate BETWEEN 0 AND 100)
+);
+GO
+
+
+/*--------------------------------------------------------------------
+ 5. Campaigns
+--------------------------------------------------------------------*/
+
+CREATE TABLE Campaigns
+(
+    CampaignID INT NOT NULL,
+    CampaignName NVARCHAR(150) NOT NULL,
+    StartDate DATE NOT NULL,
+    EndDate DATE NOT NULL,
+    Objective NVARCHAR(300) NULL,
+    PlannedBudget DECIMAL(14,2) NOT NULL,
+
+    CONSTRAINT PK_Campaigns
+        PRIMARY KEY (CampaignID),
+
+    CONSTRAINT CK_Campaigns_DateRange
+        CHECK (EndDate >= StartDate),
+
+    CONSTRAINT CK_Campaigns_PlannedBudget
+        CHECK (PlannedBudget >= 0)
+);
+GO
+
+
+/*--------------------------------------------------------------------
+ 6. Promotions
+
+ CustomerDiscountPercent:
+     Discount visible to the customer.
+
+ PlatformSubsidyPercent:
+     Portion of the discount reimbursed by Shopee/TikTok.
+     Example:
+       Customer discount = 50%
+       Platform subsidy = 30%
+       Seller effectively absorbs 20%.
+--------------------------------------------------------------------*/
+
+CREATE TABLE Promotions
+(
+    PromotionID INT NOT NULL,
+    CampaignID INT NOT NULL,
+    PromotionName NVARCHAR(150) NOT NULL,
+    PromotionType NVARCHAR(50) NOT NULL,
+    CustomerDiscountPercent DECIMAL(5,2) NOT NULL,
+    PlatformSubsidyPercent DECIMAL(5,2) NOT NULL,
+    GiftName NVARCHAR(150) NULL,
+    GiftUnitCost DECIMAL(12,2) NOT NULL
+        CONSTRAINT DF_Promotions_GiftUnitCost DEFAULT 0,
+    StartDate DATE NOT NULL,
+    EndDate DATE NOT NULL,
+
+    CONSTRAINT PK_Promotions
+        PRIMARY KEY (PromotionID),
+
+    CONSTRAINT FK_Promotions_Campaigns
+        FOREIGN KEY (CampaignID)
+        REFERENCES Campaigns(CampaignID),
+
+    CONSTRAINT CK_Promotions_CustomerDiscount
+        CHECK (CustomerDiscountPercent BETWEEN 0 AND 100),
+
+    CONSTRAINT CK_Promotions_PlatformSubsidy
+        CHECK
+        (
+            PlatformSubsidyPercent BETWEEN 0 AND 100
+            AND PlatformSubsidyPercent <= CustomerDiscountPercent
+        ),
+
+    CONSTRAINT CK_Promotions_GiftUnitCost
+        CHECK (GiftUnitCost >= 0),
+
+    CONSTRAINT CK_Promotions_DateRange
+        CHECK (EndDate >= StartDate)
+);
+GO
+
+
+/*--------------------------------------------------------------------
+ 7. Livestreams
+
+ One host appears on both Shopee and TikTok Shop during the
+ same time window on each campaign day.
+--------------------------------------------------------------------*/
+
+CREATE TABLE Livestreams
+(
+    LivestreamID INT NOT NULL,
+    CampaignID INT NOT NULL,
+    ChannelID INT NOT NULL,
+    HostName NVARCHAR(100) NOT NULL,
+    LiveDate DATE NOT NULL,
+    StartTime TIME NOT NULL,
+    EndTime TIME NOT NULL,
+    TotalViews INT NOT NULL,
+    TotalClicks INT NOT NULL,
+    LivestreamCost DECIMAL(12,2) NOT NULL,
+
+    CONSTRAINT PK_Livestreams
+        PRIMARY KEY (LivestreamID),
+
+    CONSTRAINT FK_Livestreams_Campaigns
+        FOREIGN KEY (CampaignID)
+        REFERENCES Campaigns(CampaignID),
+
+    CONSTRAINT FK_Livestreams_Channels
+        FOREIGN KEY (ChannelID)
+        REFERENCES Channels(ChannelID),
+
+    CONSTRAINT CK_Livestreams_TimeRange
+        CHECK (EndTime > StartTime),
+
+    CONSTRAINT CK_Livestreams_TotalViews
+        CHECK (TotalViews >= 0),
+
+    CONSTRAINT CK_Livestreams_TotalClicks
+        CHECK (TotalClicks >= 0),
+
+    CONSTRAINT CK_Livestreams_Cost
+        CHECK (LivestreamCost >= 0)
+);
+GO
+
+
+/*--------------------------------------------------------------------
+ 8. CampaignCosts
+
+ ChannelID:
+   NULL = shared campaign cost
+   1    = Shopee-specific cost
+   2    = TikTok Shop-specific cost
+
+ This design makes channel ROI more defensible because direct channel
+ costs are assigned directly and only shared costs require allocation.
+--------------------------------------------------------------------*/
+
+CREATE TABLE CampaignCosts
+(
+    CampaignCostID INT NOT NULL,
+    CampaignID INT NOT NULL,
+    ChannelID INT NULL,
+    CostType NVARCHAR(100) NOT NULL,
+    CostDescription NVARCHAR(250) NULL,
+    Amount DECIMAL(14,2) NOT NULL,
+
+    CONSTRAINT PK_CampaignCosts
+        PRIMARY KEY (CampaignCostID),
+
+    CONSTRAINT FK_CampaignCosts_Campaigns
+        FOREIGN KEY (CampaignID)
+        REFERENCES Campaigns(CampaignID),
+
+    CONSTRAINT FK_CampaignCosts_Channels
+        FOREIGN KEY (ChannelID)
+        REFERENCES Channels(ChannelID),
+
+    CONSTRAINT CK_CampaignCosts_Amount
+        CHECK (Amount >= 0)
+);
+GO
+
+
+/*--------------------------------------------------------------------
+ 9. Orders
+
+ Promotion is NOT stored at order level because promotions are applied
+ to individual products. PromotionID is stored in OrderDetails.
+--------------------------------------------------------------------*/
+
+CREATE TABLE Orders
+(
+    OrderID INT NOT NULL,
+    CustomerID INT NOT NULL,
+    ChannelID INT NOT NULL,
+    CampaignID INT NOT NULL,
+    LivestreamID INT NULL,
+    OrderDateTime DATETIME2(0) NOT NULL,
+    OrderStatus NVARCHAR(30) NOT NULL,
+    PaymentMethod NVARCHAR(50) NOT NULL,
+    ShippingFeePaidByCustomer DECIMAL(12,2) NOT NULL,
+    ShippingSubsidy DECIMAL(12,2) NOT NULL,
+    PlatformFee DECIMAL(12,2) NOT NULL,
+
+    CONSTRAINT PK_Orders
+        PRIMARY KEY (OrderID),
+
+    CONSTRAINT FK_Orders_Customers
+        FOREIGN KEY (CustomerID)
+        REFERENCES Customers(CustomerID),
+
+    CONSTRAINT FK_Orders_Channels
+        FOREIGN KEY (ChannelID)
+        REFERENCES Channels(ChannelID),
+
+    CONSTRAINT FK_Orders_Campaigns
+        FOREIGN KEY (CampaignID)
+        REFERENCES Campaigns(CampaignID),
+
+    CONSTRAINT FK_Orders_Livestreams
+        FOREIGN KEY (LivestreamID)
+        REFERENCES Livestreams(LivestreamID),
+
+    CONSTRAINT CK_Orders_Status
+        CHECK (OrderStatus IN (N'Completed', N'Cancelled', N'Returned')),
+
+    CONSTRAINT CK_Orders_ShippingFee
+        CHECK (ShippingFeePaidByCustomer >= 0),
+
+    CONSTRAINT CK_Orders_ShippingSubsidy
+        CHECK (ShippingSubsidy >= 0),
+
+    CONSTRAINT CK_Orders_PlatformFee
+        CHECK (PlatformFee >= 0)
+);
+GO
+
+
+/*--------------------------------------------------------------------
+ 10. OrderDetails
+
+ CustomerDiscountAmount:
+     Total discount seen by the customer.
+
+ PlatformSubsidyAmount:
+     Reimbursement paid by the marketplace to the seller.
+
+ Net product revenue to the company:
+     Quantity * UnitPrice
+     - CustomerDiscountAmount
+     + PlatformSubsidyAmount
+--------------------------------------------------------------------*/
+
+CREATE TABLE OrderDetails
+(
+    OrderDetailID INT IDENTITY(1,1) NOT NULL,
+    OrderID INT NOT NULL,
+    ProductID INT NOT NULL,
+    PromotionID INT NULL,
+    Quantity INT NOT NULL,
+    UnitPrice DECIMAL(12,2) NOT NULL,
+    CustomerDiscountAmount DECIMAL(12,2) NOT NULL,
+    PlatformSubsidyAmount DECIMAL(12,2) NOT NULL,
+    CostOfGoodsSold DECIMAL(12,2) NOT NULL,
+    GiftCost DECIMAL(12,2) NOT NULL,
+
+    CONSTRAINT PK_OrderDetails
+        PRIMARY KEY (OrderDetailID),
+
+    CONSTRAINT FK_OrderDetails_Orders
+        FOREIGN KEY (OrderID)
+        REFERENCES Orders(OrderID),
+
+    CONSTRAINT FK_OrderDetails_Products
+        FOREIGN KEY (ProductID)
+        REFERENCES Products(ProductID),
+
+    CONSTRAINT FK_OrderDetails_Promotions
+        FOREIGN KEY (PromotionID)
+        REFERENCES Promotions(PromotionID),
+
+    CONSTRAINT CK_OrderDetails_Quantity
+        CHECK (Quantity > 0),
+
+    CONSTRAINT CK_OrderDetails_UnitPrice
+        CHECK (UnitPrice > 0),
+
+    CONSTRAINT CK_OrderDetails_CustomerDiscount
+        CHECK (CustomerDiscountAmount >= 0),
+
+    CONSTRAINT CK_OrderDetails_PlatformSubsidy
+        CHECK (PlatformSubsidyAmount >= 0),
+
+    CONSTRAINT CK_OrderDetails_COGS
+        CHECK (CostOfGoodsSold >= 0),
+
+    CONSTRAINT CK_OrderDetails_GiftCost
+        CHECK (GiftCost >= 0)
+);
+GO
+
+
+/*====================================================================
+ PART 3: INDEXES
+====================================================================*/
+
+CREATE INDEX IX_Orders_CampaignDate
+    ON Orders (CampaignID, OrderDateTime);
+
+CREATE INDEX IX_Orders_Channel
+    ON Orders (ChannelID);
+
+CREATE INDEX IX_Orders_Livestream
+    ON Orders (LivestreamID);
+
+CREATE INDEX IX_OrderDetails_Order
+    ON OrderDetails (OrderID);
+
+CREATE INDEX IX_OrderDetails_Product
+    ON OrderDetails (ProductID);
+
+CREATE INDEX IX_OrderDetails_Promotion
+    ON OrderDetails (PromotionID);
+GO
+
+
+/*====================================================================
+ PART 4: INSERT MASTER DATA
+====================================================================*/
+
+
+/*--------------------------------------------------------------------
+ Categories
+--------------------------------------------------------------------*/
+
+INSERT INTO Categories
+(
+    CategoryID,
+    CategoryName
+)
+VALUES
+(1, N'Smartphones'),
+(2, N'Audio'),
+(3, N'Mobile Accessories'),
+(4, N'Computer Accessories'),
+(5, N'Smart Home'),
+(6, N'Personal Care');
+GO
+
+
+/*--------------------------------------------------------------------
+ Products
+--------------------------------------------------------------------*/
+
+INSERT INTO Products
+(
+    ProductID,
+    CategoryID,
+    ProductName,
+    BrandName,
+    CostPrice,
+    RegularPrice
+)
+VALUES
+(101,1,N'iPhone 15 128GB',N'Apple',650.00,999.00),
+(102,1,N'Samsung Galaxy S24',N'Samsung',520.00,799.00),
+(103,1,N'Xiaomi Redmi Note 13',N'Xiaomi',145.00,249.00),
+(104,1,N'OPPO Reno 11',N'OPPO',230.00,399.00),
+
+(105,2,N'AirPods Pro 2',N'Apple',135.00,249.00),
+(106,2,N'Sony WH-1000XM5',N'Sony',210.00,399.00),
+(107,2,N'JBL Bluetooth Speaker',N'JBL',45.00,99.00),
+(108,2,N'Wireless Earbuds A20',N'Anker',25.00,59.00),
+
+(109,3,N'Anker Power Bank 20000mAh',N'Anker',25.00,59.00),
+(110,3,N'USB-C Fast Charger 65W',N'Baseus',16.00,39.00),
+(111,3,N'Magnetic Phone Case',N'Spigen',7.00,24.00),
+(112,3,N'Aluminum Phone Stand',N'Ugreen',5.00,18.00),
+
+(113,4,N'Logitech MX Master 3S',N'Logitech',58.00,99.00),
+(114,4,N'Mechanical Keyboard K8',N'Keychron',52.00,109.00),
+(115,4,N'Gaming Mouse G502',N'Logitech',27.00,59.00),
+(116,4,N'USB-C Hub 8-in-1',N'Ugreen',22.00,49.00),
+
+(117,5,N'Robot Vacuum S10',N'Xiaomi',180.00,329.00),
+(118,5,N'Smart LED Light Strip',N'Philips',19.00,49.00),
+(119,5,N'Smart Security Camera',N'TP-Link',21.00,49.00),
+(120,5,N'Smart Air Purifier',N'Levoit',80.00,149.00),
+
+(121,6,N'Ionic Hair Dryer Pro',N'Philips',28.00,69.00),
+(122,6,N'Electric Toothbrush',N'Oral-B',22.00,59.00),
+(123,6,N'Facial Cleansing Brush',N'Foreo',42.00,99.00),
+(124,6,N'Mini Body Massager',N'Renova',19.00,49.00);
+GO
+
+
+/*--------------------------------------------------------------------
+ Customers
+ 60 customers:
+ - 40 existing customers
+ - 20 customers registered during the campaign
+--------------------------------------------------------------------*/
+
+INSERT INTO Customers
+(
+    CustomerID,
+    CustomerName,
+    Gender,
+    StateName,
+    CustomerSegment,
+    RegisterDate
+)
+VALUES
+(1,N'Olivia Johnson',N'Female',N'Georgia',N'VIP','2024-05-12'),
+(2,N'Ethan Williams',N'Male',N'Texas',N'Regular','2024-07-20'),
+(3,N'Sophia Brown',N'Female',N'California',N'Regular','2024-09-18'),
+(4,N'Liam Jones',N'Male',N'Florida',N'VIP','2024-11-05'),
+(5,N'Emma Garcia',N'Female',N'New York',N'Regular','2025-01-14'),
+(6,N'Noah Miller',N'Male',N'Georgia',N'Regular','2025-02-09'),
+(7,N'Ava Davis',N'Female',N'Texas',N'VIP','2025-02-26'),
+(8,N'Oliver Rodriguez',N'Male',N'California',N'Regular','2025-03-07'),
+(9,N'Isabella Martinez',N'Female',N'Florida',N'Regular','2025-03-22'),
+(10,N'Elijah Hernandez',N'Male',N'Washington',N'Regular','2025-04-11'),
+
+(11,N'Mia Lopez',N'Female',N'Illinois',N'Regular','2025-04-25'),
+(12,N'James Gonzalez',N'Male',N'Arizona',N'VIP','2025-05-02'),
+(13,N'Charlotte Wilson',N'Female',N'Nevada',N'Regular','2025-05-19'),
+(14,N'Benjamin Anderson',N'Male',N'Georgia',N'Regular','2025-05-28'),
+(15,N'Amelia Thomas',N'Female',N'Texas',N'Regular','2025-06-03'),
+(16,N'Lucas Taylor',N'Male',N'California',N'VIP','2025-06-15'),
+(17,N'Harper Moore',N'Female',N'Florida',N'Regular','2025-06-22'),
+(18,N'Henry Jackson',N'Male',N'New York',N'Regular','2025-07-01'),
+(19,N'Evelyn Martin',N'Female',N'Washington',N'Regular','2025-07-06'),
+(20,N'Alexander Lee',N'Male',N'Georgia',N'VIP','2025-07-10'),
+
+(21,N'Abigail Perez',N'Female',N'Texas',N'Regular','2025-07-12'),
+(22,N'Michael Thompson',N'Male',N'California',N'Regular','2025-07-14'),
+(23,N'Emily White',N'Female',N'Florida',N'Regular','2025-07-16'),
+(24,N'Daniel Harris',N'Male',N'Illinois',N'Regular','2025-07-18'),
+(25,N'Elizabeth Sanchez',N'Female',N'Georgia',N'VIP','2025-07-20'),
+(26,N'Matthew Clark',N'Male',N'Texas',N'Regular','2025-07-22'),
+(27,N'Sofia Ramirez',N'Female',N'California',N'Regular','2025-07-24'),
+(28,N'Jackson Lewis',N'Male',N'Florida',N'Regular','2025-07-25'),
+(29,N'Avery Robinson',N'Female',N'New York',N'Regular','2025-07-26'),
+(30,N'Sebastian Walker',N'Male',N'Washington',N'Regular','2025-07-27'),
+
+(31,N'Camila Hall',N'Female',N'Georgia',N'Regular','2025-07-28'),
+(32,N'Jack Allen',N'Male',N'Texas',N'Regular','2025-07-29'),
+(33,N'Scarlett King',N'Female',N'California',N'Regular','2025-07-30'),
+(34,N'Owen Wright',N'Male',N'Florida',N'Regular','2025-07-31'),
+(35,N'Grace Scott',N'Female',N'New York',N'Regular','2025-08-01'),
+(36,N'Wyatt Green',N'Male',N'Washington',N'Regular','2025-08-02'),
+(37,N'Chloe Baker',N'Female',N'Georgia',N'Regular','2025-08-03'),
+(38,N'Luke Adams',N'Male',N'Texas',N'Regular','2025-08-04'),
+(39,N'Victoria Nelson',N'Female',N'California',N'Regular','2025-08-05'),
+(40,N'Julian Carter',N'Male',N'Florida',N'Regular','2025-08-06'),
+
+(41,N'Lily Mitchell',N'Female',N'Georgia',N'New','2025-08-07'),
+(42,N'Leo Roberts',N'Male',N'Texas',N'New','2025-08-07'),
+(43,N'Hannah Turner',N'Female',N'California',N'New','2025-08-07'),
+(44,N'Isaac Phillips',N'Male',N'Florida',N'New','2025-08-07'),
+(45,N'Zoey Campbell',N'Female',N'New York',N'New','2025-08-07'),
+(46,N'Gabriel Parker',N'Male',N'Washington',N'New','2025-08-07'),
+
+(47,N'Nora Evans',N'Female',N'Georgia',N'New','2025-08-08'),
+(48,N'Anthony Edwards',N'Male',N'Texas',N'New','2025-08-08'),
+(49,N'Riley Collins',N'Female',N'California',N'New','2025-08-08'),
+(50,N'Dylan Stewart',N'Male',N'Florida',N'New','2025-08-08'),
+(51,N'Layla Morris',N'Female',N'New York',N'New','2025-08-08'),
+(52,N'Caleb Rogers',N'Male',N'Washington',N'New','2025-08-08'),
+(53,N'Penelope Reed',N'Female',N'Georgia',N'New','2025-08-08'),
+
+(54,N'Andrew Cook',N'Male',N'Texas',N'New','2025-08-09'),
+(55,N'Natalie Morgan',N'Female',N'California',N'New','2025-08-09'),
+(56,N'Joshua Bell',N'Male',N'Florida',N'New','2025-08-09'),
+(57,N'Brooklyn Murphy',N'Female',N'New York',N'New','2025-08-09'),
+(58,N'Christopher Bailey',N'Male',N'Washington',N'New','2025-08-09'),
+(59,N'Savannah Rivera',N'Female',N'Georgia',N'New','2025-08-09'),
+(60,N'Ryan Cooper',N'Male',N'Texas',N'New','2025-08-09');
+GO
+
+
+/*--------------------------------------------------------------------
+ Channels
+--------------------------------------------------------------------*/
+
+INSERT INTO Channels
+(
+    ChannelID,
+    ChannelName,
+    CommissionRate
+)
+VALUES
+(1,N'Shopee',8.00),
+(2,N'TikTok Shop',7.00);
+GO
+
+
+/*--------------------------------------------------------------------
+ Campaign
+--------------------------------------------------------------------*/
+
+INSERT INTO Campaigns
+(
+    CampaignID,
+    CampaignName,
+    StartDate,
+    EndDate,
+    Objective,
+    PlannedBudget
+)
+VALUES
+(
+    1,
+    N'8.8 Mega Sale',
+    '2025-08-07',
+    '2025-08-09',
+    N'Increase revenue, acquire new customers, evaluate promotional effectiveness, and compare Shopee versus TikTok Shop performance.',
+    22000.00
+);
+GO
+
+
+/*--------------------------------------------------------------------
+ Promotions
+
+ Deep-discount marketplace promotions are partly subsidized
+ by the platform.
+
+ Examples:
+ 30% Flash Sale:
+   Customer receives 30% discount.
+   Platform reimburses 10%.
+   Seller absorbs 20%.
+
+ 50% Flash Sale:
+   Customer receives 50% discount.
+   Platform reimburses 30%.
+   Seller absorbs 20%.
+--------------------------------------------------------------------*/
+
+INSERT INTO Promotions
+(
+    PromotionID,
+    CampaignID,
+    PromotionName,
+    PromotionType,
+    CustomerDiscountPercent,
+    PlatformSubsidyPercent,
+    GiftName,
+    GiftUnitCost,
+    StartDate,
+    EndDate
+)
+VALUES
+(1,1,N'10% Discount Voucher',N'Percentage Discount',10.00,0.00,NULL,0.00,'2025-08-07','2025-08-09'),
+(2,1,N'20% Discount Voucher',N'Percentage Discount',20.00,0.00,NULL,0.00,'2025-08-07','2025-08-09'),
+(3,1,N'30% Marketplace Flash Sale',N'Flash Sale',30.00,10.00,NULL,0.00,'2025-08-07','2025-08-09'),
+(4,1,N'50% Marketplace Flash Sale',N'Flash Sale',50.00,30.00,NULL,0.00,'2025-08-07','2025-08-09'),
+(5,1,N'Free Phone Stand Gift',N'Gift',0.00,0.00,N'Phone Stand',5.00,'2025-08-07','2025-08-09'),
+(6,1,N'Free Mini Earbuds Gift',N'Gift',0.00,0.00,N'Mini Earbuds',10.00,'2025-08-07','2025-08-09');
+GO
+
+
+/*--------------------------------------------------------------------
+ Livestreams
+--------------------------------------------------------------------*/
+
+INSERT INTO Livestreams
+(
+    LivestreamID,
+    CampaignID,
+    ChannelID,
+    HostName,
+    LiveDate,
+    StartTime,
+    EndTime,
+    TotalViews,
+    TotalClicks,
+    LivestreamCost
+)
+VALUES
+(1,1,1,N'Emily Carter','2025-08-07','19:00','21:00',12000,2100,450.00),
+(2,1,2,N'Emily Carter','2025-08-07','19:00','21:00',18000,3600,550.00),
+
+(3,1,1,N'Emily Carter','2025-08-08','19:00','22:00',20000,4200,600.00),
+(4,1,2,N'Emily Carter','2025-08-08','19:00','22:00',30000,6900,700.00),
+
+(5,1,1,N'Emily Carter','2025-08-09','19:00','21:00',14000,2500,450.00),
+(6,1,2,N'Emily Carter','2025-08-09','19:00','21:00',22000,4300,550.00);
+GO
+
+
+/*--------------------------------------------------------------------
+ Campaign Costs
+
+ Direct costs:
+ ChannelID = 1 or 2
+
+ Shared costs:
+ ChannelID = NULL
+--------------------------------------------------------------------*/
+
+INSERT INTO CampaignCosts
+(
+    CampaignCostID,
+    CampaignID,
+    ChannelID,
+    CostType,
+    CostDescription,
+    Amount
+)
+VALUES
+(1,1,2,N'TikTok Advertising',N'Paid TikTok Shop campaign advertising.',5000.00),
+(2,1,1,N'Shopee Advertising',N'Paid Shopee search and display advertising.',3500.00),
+(3,1,2,N'TikTok Affiliate Commission',N'Affiliate creator compensation attributed to TikTok Shop.',1500.00),
+(4,1,1,N'Shopee Affiliate Commission',N'Affiliate creator compensation attributed to Shopee.',900.00),
+
+(5,1,NULL,N'Social Media Advertising',N'Shared campaign awareness advertising.',2500.00),
+(6,1,NULL,N'Graphic Design',N'Shared campaign banners and promotional assets.',1000.00),
+(7,1,NULL,N'Video Production',N'Shared campaign video production.',1800.00),
+(8,1,NULL,N'Campaign Management',N'Shared campaign management labor cost.',1200.00);
+GO
+
+
+/*====================================================================
+ PART 5: GENERATE 600 ORDERS
+
+ Design:
+ - TikTok Shop receives about 60% of orders.
+ - Shopee receives about 40%.
+ - Channel assignment is independent from promotion assignment.
+ - Aug 8 has stronger livestream attribution than Aug 7 and Aug 9.
+ - A small percentage of orders are cancelled or returned.
+====================================================================*/
+
+DECLARE @OrderNumber INT = 1;
+DECLARE @CustomerID INT;
+DECLARE @ChannelID INT;
+DECLARE @LivestreamID INT;
+DECLARE @OrderDate DATE;
+DECLARE @OrderDateTime DATETIME2(0);
+DECLARE @OrderStatus NVARCHAR(30);
+DECLARE @PaymentMethod NVARCHAR(50);
+DECLARE @ShippingFee DECIMAL(12,2);
+DECLARE @ShippingSubsidy DECIMAL(12,2);
+DECLARE @Hour INT;
+DECLARE @Minute INT;
+DECLARE @LiveThreshold INT;
+
+WHILE @OrderNumber <= 600
+BEGIN
+    /* Cycle evenly through 60 customers */
+    SET @CustomerID = ((@OrderNumber * 17) % 60) + 1;
+
+    /* Approximately 60% TikTok Shop, 40% Shopee */
+    SET @ChannelID =
+        CASE
+            WHEN @OrderNumber % 5 IN (0,1,2) THEN 2
+            ELSE 1
+        END;
+
+    /* Campaign runs for 3 days */
+    SET @OrderDate =
+        DATEADD
+        (
+            DAY,
+            (@OrderNumber - 1) % 3,
+            CAST('2025-08-07' AS DATE)
+        );
+
+    /*
+       Livestream attribution:
+       Aug 7: about 60%
+       Aug 8: about 90%
+       Aug 9: about 70%
+    */
+    SET @LiveThreshold =
+        CASE
+            WHEN @OrderDate = '2025-08-07' THEN 6
+            WHEN @OrderDate = '2025-08-08' THEN 9
+            ELSE 7
+        END;
+
+    IF @OrderNumber % 10 < @LiveThreshold
+    BEGIN
+        SET @LivestreamID =
+            CASE
+                WHEN @OrderDate = '2025-08-07' AND @ChannelID = 1 THEN 1
+                WHEN @OrderDate = '2025-08-07' AND @ChannelID = 2 THEN 2
+                WHEN @OrderDate = '2025-08-08' AND @ChannelID = 1 THEN 3
+                WHEN @OrderDate = '2025-08-08' AND @ChannelID = 2 THEN 4
+                WHEN @OrderDate = '2025-08-09' AND @ChannelID = 1 THEN 5
+                WHEN @OrderDate = '2025-08-09' AND @ChannelID = 2 THEN 6
+            END;
+
+        SET @Hour = 19 + (@OrderNumber % 3);
+    END
+    ELSE
+    BEGIN
+        SET @LivestreamID = NULL;
+        SET @Hour = 9 + (@OrderNumber % 10);
+    END;
+
+    SET @Minute = (@OrderNumber * 7) % 60;
+
+    SET @OrderDateTime =
+        DATEADD
+        (
+            MINUTE,
+            @Minute,
+            DATEADD(HOUR, @Hour, CAST(@OrderDate AS DATETIME2))
+        );
+
+    /* Approximately 95% of orders are completed */
+    SET @OrderStatus =
+        CASE
+            WHEN @OrderNumber % 41 = 0 THEN N'Cancelled'
+            WHEN @OrderNumber % 53 = 0 THEN N'Returned'
+            ELSE N'Completed'
+        END;
+
+    SET @PaymentMethod =
+        CASE @OrderNumber % 4
+            WHEN 0 THEN N'Credit Card'
+            WHEN 1 THEN N'Digital Wallet'
+            WHEN 2 THEN N'Cash on Delivery'
+            ELSE N'Bank Transfer'
+        END;
+
+    SET @ShippingFee =
+        CASE
+            WHEN @OrderNumber % 3 = 0 THEN 0.00
+            ELSE 3.99
+        END;
+
+    SET @ShippingSubsidy =
+        CASE
+            WHEN @ShippingFee = 0 THEN 3.99
+            ELSE 1.50
+        END;
+
+    INSERT INTO Orders
+    (
+        OrderID,
+        CustomerID,
+        ChannelID,
+        CampaignID,
+        LivestreamID,
+        OrderDateTime,
+        OrderStatus,
+        PaymentMethod,
+        ShippingFeePaidByCustomer,
+        ShippingSubsidy,
+        PlatformFee
+    )
+    VALUES
+    (
+        10000 + @OrderNumber,
+        @CustomerID,
+        @ChannelID,
+        1,
+        @LivestreamID,
+        @OrderDateTime,
+        @OrderStatus,
+        @PaymentMethod,
+        @ShippingFee,
+        @ShippingSubsidy,
+        0.00
+    );
+
+    SET @OrderNumber += 1;
+END;
+GO
+
+
+/*====================================================================
+ PART 6: GENERATE ORDER DETAILS
+
+ - Every order has at least one product.
+ - About 45% of orders contain a second product.
+ - Promotions are assigned at PRODUCT LINE level.
+ - Promotion assignment is independent from ChannelID.
+====================================================================*/
+
+DECLARE @CurrentOrderID INT = 10001;
+DECLARE @OrderSequence INT;
+DECLARE @LineNumber INT;
+DECLARE @ProductID INT;
+DECLARE @SecondProductID INT;
+DECLARE @PromotionID INT;
+DECLARE @PromoSeed INT;
+DECLARE @Quantity INT;
+DECLARE @UnitPrice DECIMAL(12,2);
+DECLARE @CostPrice DECIMAL(12,2);
+DECLARE @CustomerDiscountPercent DECIMAL(5,2);
+DECLARE @PlatformSubsidyPercent DECIMAL(5,2);
+DECLARE @GiftUnitCost DECIMAL(12,2);
+DECLARE @CustomerDiscountAmount DECIMAL(12,2);
+DECLARE @PlatformSubsidyAmount DECIMAL(12,2);
+
+WHILE @CurrentOrderID <= 10600
+BEGIN
+    SET @OrderSequence = @CurrentOrderID - 10000;
+
+    /*------------------------------
+      FIRST PRODUCT LINE
+    ------------------------------*/
+
+    SET @LineNumber = 1;
+
+    SET @ProductID =
+        101 + ((@OrderSequence * 11) % 24);
+
+    SET @Quantity =
+        CASE
+            WHEN @OrderSequence % 13 = 0 THEN 2
+            ELSE 1
+        END;
+
+    /*
+       Promotion mix:
+       - 5%  : 50% flash sale
+       - 10% : 30% flash sale
+       - 20% : 20% discount
+       - 25% : 10% discount
+       - 15% : phone stand gift
+       - 5%  : mini earbuds gift
+       - 20% : no promotion
+    */
+    SET @PromoSeed =
+        (@CurrentOrderID * 7 + @LineNumber * 3) % 20;
+
+    SET @PromotionID =
+        CASE
+            WHEN @PromoSeed = 0 THEN 4
+            WHEN @PromoSeed IN (1,2) THEN 3
+            WHEN @PromoSeed IN (3,4,5,6) THEN 2
+            WHEN @PromoSeed IN (7,8,9,10,11) THEN 1
+            WHEN @PromoSeed IN (12,13,14) THEN 5
+            WHEN @PromoSeed = 15 THEN 6
+            ELSE NULL
+        END;
+
+    SELECT
+        @UnitPrice = RegularPrice,
+        @CostPrice = CostPrice
+    FROM Products
+    WHERE ProductID = @ProductID;
+
+    IF @PromotionID IS NULL
+    BEGIN
+        SET @CustomerDiscountPercent = 0;
+        SET @PlatformSubsidyPercent = 0;
+        SET @GiftUnitCost = 0;
+    END
+    ELSE
+    BEGIN
+        SELECT
+            @CustomerDiscountPercent = CustomerDiscountPercent,
+            @PlatformSubsidyPercent = PlatformSubsidyPercent,
+            @GiftUnitCost = GiftUnitCost
+        FROM Promotions
+        WHERE PromotionID = @PromotionID;
+    END;
+
+    SET @CustomerDiscountAmount =
+        ROUND
+        (
+            @Quantity
+            * @UnitPrice
+            * @CustomerDiscountPercent / 100.0,
+            2
+        );
+
+    SET @PlatformSubsidyAmount =
+        ROUND
+        (
+            @Quantity
+            * @UnitPrice
+            * @PlatformSubsidyPercent / 100.0,
+            2
+        );
+
+    INSERT INTO OrderDetails
+    (
+        OrderID,
+        ProductID,
+        PromotionID,
+        Quantity,
+        UnitPrice,
+        CustomerDiscountAmount,
+        PlatformSubsidyAmount,
+        CostOfGoodsSold,
+        GiftCost
+    )
+    VALUES
+    (
+        @CurrentOrderID,
+        @ProductID,
+        @PromotionID,
+        @Quantity,
+        @UnitPrice,
+        @CustomerDiscountAmount,
+        @PlatformSubsidyAmount,
+        @CostPrice * @Quantity,
+        @GiftUnitCost
+    );
+
+
+    /*------------------------------
+      SECOND PRODUCT LINE
+      About 45% of orders
+    ------------------------------*/
+
+    IF @OrderSequence % 20 < 9
+    BEGIN
+        SET @LineNumber = 2;
+
+        SET @SecondProductID =
+            101 + ((@OrderSequence * 5 + 7) % 24);
+
+        IF @SecondProductID = @ProductID
+        BEGIN
+            SET @SecondProductID =
+                CASE
+                    WHEN @SecondProductID = 124 THEN 101
+                    ELSE @SecondProductID + 1
+                END;
+        END;
+
+        SET @Quantity = 1;
+
+        SET @PromoSeed =
+            (@CurrentOrderID * 7 + @LineNumber * 3) % 20;
+
+        SET @PromotionID =
+            CASE
+                WHEN @PromoSeed = 0 THEN 4
+                WHEN @PromoSeed IN (1,2) THEN 3
+                WHEN @PromoSeed IN (3,4,5,6) THEN 2
+                WHEN @PromoSeed IN (7,8,9,10,11) THEN 1
+                WHEN @PromoSeed IN (12,13,14) THEN 5
+                WHEN @PromoSeed = 15 THEN 6
+                ELSE NULL
+            END;
+
+        SELECT
+            @UnitPrice = RegularPrice,
+            @CostPrice = CostPrice
+        FROM Products
+        WHERE ProductID = @SecondProductID;
+
+        IF @PromotionID IS NULL
+        BEGIN
+            SET @CustomerDiscountPercent = 0;
+            SET @PlatformSubsidyPercent = 0;
+            SET @GiftUnitCost = 0;
+        END
+        ELSE
+        BEGIN
+            SELECT
+                @CustomerDiscountPercent = CustomerDiscountPercent,
+                @PlatformSubsidyPercent = PlatformSubsidyPercent,
+                @GiftUnitCost = GiftUnitCost
+            FROM Promotions
+            WHERE PromotionID = @PromotionID;
+        END;
+
+        SET @CustomerDiscountAmount =
+            ROUND
+            (
+                @UnitPrice
+                * @CustomerDiscountPercent / 100.0,
+                2
+            );
+
+        SET @PlatformSubsidyAmount =
+            ROUND
+            (
+                @UnitPrice
+                * @PlatformSubsidyPercent / 100.0,
+                2
+            );
+
+        INSERT INTO OrderDetails
+        (
+            OrderID,
+            ProductID,
+            PromotionID,
+            Quantity,
+            UnitPrice,
+            CustomerDiscountAmount,
+            PlatformSubsidyAmount,
+            CostOfGoodsSold,
+            GiftCost
+        )
+        VALUES
+        (
+            @CurrentOrderID,
+            @SecondProductID,
+            @PromotionID,
+            1,
+            @UnitPrice,
+            @CustomerDiscountAmount,
+            @PlatformSubsidyAmount,
+            @CostPrice,
+            @GiftUnitCost
+        );
+    END;
+
+    SET @CurrentOrderID += 1;
+END;
+GO
+
+
+/*====================================================================
+ PART 7: CALCULATE PLATFORM FEES
+
+ Marketplace commission is calculated on product revenue received
+ by the seller after customer discounts and platform subsidies.
+
+ NetProductRevenue =
+ GrossRevenue
+ - CustomerDiscountAmount
+ + PlatformSubsidyAmount
+====================================================================*/
+
+UPDATE O
+SET O.PlatformFee =
+    ROUND
+    (
+        X.NetProductRevenue
+        * C.CommissionRate / 100.0,
+        2
+    )
+FROM Orders O
+
+INNER JOIN Channels C
+    ON O.ChannelID = C.ChannelID
+
+INNER JOIN
+(
+    SELECT
+        OrderID,
+        SUM
+        (
+            Quantity * UnitPrice
+            - CustomerDiscountAmount
+            + PlatformSubsidyAmount
+        ) AS NetProductRevenue
+    FROM OrderDetails
+    GROUP BY OrderID
+) X
+    ON O.OrderID = X.OrderID
+
+WHERE O.CampaignID = 1;
+GO
+
+
+/*====================================================================
+ PART 8: DATA QUALITY / VALIDATION CHECKS
+====================================================================*/
+
+
+/*--------------------------------------------------------------------
+ 8.1 Row counts
+ Expected approximately:
+ Orders       = 600
+ OrderDetails = 870
+--------------------------------------------------------------------*/
+
+SELECT N'Categories' AS TableName, COUNT(*) AS TotalRows
+FROM Categories
+
+UNION ALL
+SELECT N'Products', COUNT(*) FROM Products
+
+UNION ALL
+SELECT N'Customers', COUNT(*) FROM Customers
+
+UNION ALL
+SELECT N'Channels', COUNT(*) FROM Channels
+
+UNION ALL
+SELECT N'Campaigns', COUNT(*) FROM Campaigns
+
+UNION ALL
+SELECT N'Promotions', COUNT(*) FROM Promotions
+
+UNION ALL
+SELECT N'Livestreams', COUNT(*) FROM Livestreams
+
+UNION ALL
+SELECT N'CampaignCosts', COUNT(*) FROM CampaignCosts
+
+UNION ALL
+SELECT N'Orders', COUNT(*) FROM Orders
+
+UNION ALL
+SELECT N'OrderDetails', COUNT(*) FROM OrderDetails;
+GO
+
+
+/*--------------------------------------------------------------------
+ 8.2 Promotion distribution by channel
+
+ Both channels should contain a reasonable mix of promotions.
+ This confirms that promotion assignment is not biased toward
+ one channel.
+--------------------------------------------------------------------*/
+
+SELECT
+    C.ChannelName,
+    ISNULL(P.PromotionName, N'No Promotion') AS PromotionName,
+    COUNT(*) AS TotalOrderLines
+FROM OrderDetails OD
+
+INNER JOIN Orders O
+    ON OD.OrderID = O.OrderID
+
+INNER JOIN Channels C
+    ON O.ChannelID = C.ChannelID
+
+LEFT JOIN Promotions P
+    ON OD.PromotionID = P.PromotionID
+
+GROUP BY
+    C.ChannelName,
+    ISNULL(P.PromotionName, N'No Promotion')
+
+ORDER BY
+    C.ChannelName,
+    TotalOrderLines DESC;
+GO
+
+
+/*====================================================================
+ PART 9: BI ANALYSIS QUERIES
+ Only COMPLETED orders are included in sales/profit analysis.
+====================================================================*/
+
+
+/*====================================================================
+ QUERY 1: TOP 10 BEST-SELLING PRODUCTS
+====================================================================*/
+
+SELECT TOP 10
+    P.ProductID,
+    P.ProductName,
+    P.BrandName,
+    C.CategoryName,
+
+    SUM(OD.Quantity) AS TotalUnitsSold,
+
+    COUNT(DISTINCT O.OrderID) AS TotalOrders,
+
+    CAST
+    (
+        SUM
+        (
+            OD.Quantity * OD.UnitPrice
+            - OD.CustomerDiscountAmount
+            + OD.PlatformSubsidyAmount
+        )
+        AS DECIMAL(14,2)
+    ) AS NetRevenue
+
+FROM OrderDetails OD
+
+INNER JOIN Orders O
+    ON OD.OrderID = O.OrderID
+
+INNER JOIN Products P
+    ON OD.ProductID = P.ProductID
+
+INNER JOIN Categories C
+    ON P.CategoryID = C.CategoryID
+
+WHERE O.OrderStatus = N'Completed'
+  AND O.CampaignID = 1
+
+GROUP BY
+    P.ProductID,
+    P.ProductName,
+    P.BrandName,
+    C.CategoryName
+
+ORDER BY
+    TotalUnitsSold DESC,
+    NetRevenue DESC;
+GO
+
+
+/*====================================================================
+ QUERY 2: DAILY CAMPAIGN REVENUE
+====================================================================*/
+
+WITH OrderRevenue AS
+(
+    SELECT
+        O.OrderID,
+        CAST(O.OrderDateTime AS DATE) AS SalesDate,
+
+        SUM(OD.Quantity) AS TotalUnitsSold,
+
+        SUM
+        (
+            OD.Quantity * OD.UnitPrice
+            - OD.CustomerDiscountAmount
+            + OD.PlatformSubsidyAmount
+        ) AS ProductNetRevenue,
+
+        O.ShippingFeePaidByCustomer
+
+    FROM Orders O
+
+    INNER JOIN OrderDetails OD
+        ON O.OrderID = OD.OrderID
+
+    WHERE O.OrderStatus = N'Completed'
+      AND O.CampaignID = 1
+
+    GROUP BY
+        O.OrderID,
+        CAST(O.OrderDateTime AS DATE),
+        O.ShippingFeePaidByCustomer
+)
+
+SELECT
+    SalesDate,
+
+    COUNT(*) AS TotalOrders,
+
+    SUM(TotalUnitsSold) AS TotalUnitsSold,
+
+    CAST
+    (
+        SUM(ProductNetRevenue)
+        AS DECIMAL(14,2)
+    ) AS ProductNetRevenue,
+
+    CAST
+    (
+        SUM(ProductNetRevenue + ShippingFeePaidByCustomer)
+        AS DECIMAL(14,2)
+    ) AS TotalRevenue
+
+FROM OrderRevenue
+
+GROUP BY SalesDate
+
+ORDER BY SalesDate;
+GO
+
+
+/*====================================================================
+ QUERY 3: SHOPEE VS. TIKTOK SHOP
+====================================================================*/
+
+WITH ChannelOrders AS
+(
+    SELECT
+        O.OrderID,
+        O.ChannelID,
+
+        SUM
+        (
+            OD.Quantity * OD.UnitPrice
+            - OD.CustomerDiscountAmount
+            + OD.PlatformSubsidyAmount
+        ) AS ProductNetRevenue,
+
+        SUM(OD.CostOfGoodsSold) AS COGS,
+
+        SUM(OD.GiftCost) AS GiftCost,
+
+        O.PlatformFee,
+        O.ShippingSubsidy,
+        O.ShippingFeePaidByCustomer
+
+    FROM Orders O
+
+    INNER JOIN OrderDetails OD
+        ON O.OrderID = OD.OrderID
+
+    WHERE O.OrderStatus = N'Completed'
+      AND O.CampaignID = 1
+
+    GROUP BY
+        O.OrderID,
+        O.ChannelID,
+        O.PlatformFee,
+        O.ShippingSubsidy,
+        O.ShippingFeePaidByCustomer
+)
+
+SELECT
+    C.ChannelName,
+
+    COUNT(*) AS TotalOrders,
+
+    CAST
+    (
+        SUM(CO.ProductNetRevenue)
+        AS DECIMAL(14,2)
+    ) AS ProductNetRevenue,
+
+    CAST
+    (
+        AVG(CO.ProductNetRevenue)
+        AS DECIMAL(14,2)
+    ) AS AverageOrderValue,
+
+    CAST
+    (
+        SUM
+        (
+            CO.ProductNetRevenue
+            + CO.ShippingFeePaidByCustomer
+            - CO.COGS
+            - CO.GiftCost
+            - CO.PlatformFee
+            - CO.ShippingSubsidy
+        )
+        AS DECIMAL(14,2)
+    ) AS ProfitBeforeCampaignCost
+
+FROM ChannelOrders CO
+
+INNER JOIN Channels C
+    ON CO.ChannelID = C.ChannelID
+
+GROUP BY C.ChannelName
+
+ORDER BY ProductNetRevenue DESC;
+GO
+
+
+/*====================================================================
+ QUERY 4: PROMOTION WITH THE HIGHEST REVENUE
+====================================================================*/
+
+SELECT
+    P.PromotionID,
+    P.PromotionName,
+    P.PromotionType,
+    P.CustomerDiscountPercent,
+    P.PlatformSubsidyPercent,
+
+    COUNT(DISTINCT O.OrderID) AS TotalOrders,
+
+    SUM(OD.Quantity) AS TotalUnitsSold,
+
+    CAST
+    (
+        SUM
+        (
+            OD.Quantity * OD.UnitPrice
+            - OD.CustomerDiscountAmount
+            + OD.PlatformSubsidyAmount
+        )
+        AS DECIMAL(14,2)
+    ) AS NetRevenue
+
+FROM Promotions P
+
+INNER JOIN OrderDetails OD
+    ON P.PromotionID = OD.PromotionID
+
+INNER JOIN Orders O
+    ON OD.OrderID = O.OrderID
+
+WHERE O.OrderStatus = N'Completed'
+  AND O.CampaignID = 1
+
+GROUP BY
+    P.PromotionID,
+    P.PromotionName,
+    P.PromotionType,
+    P.CustomerDiscountPercent,
+    P.PlatformSubsidyPercent
+
+ORDER BY NetRevenue DESC;
+GO
+
+
+/*====================================================================
+ QUERY 5: PROMOTION WITH THE HIGHEST PROFIT
+
+ Variable order-level costs are allocated to product lines based on
+ each line's share of order product revenue.
+
+ Fixed campaign costs are NOT allocated to individual promotions.
+====================================================================*/
+
+WITH OrderTotals AS
+(
+    SELECT
+        O.OrderID,
+
+        SUM
+        (
+            OD.Quantity * OD.UnitPrice
+            - OD.CustomerDiscountAmount
+            + OD.PlatformSubsidyAmount
+        ) AS OrderProductRevenue,
+
+        O.PlatformFee,
+        O.ShippingSubsidy,
+        O.ShippingFeePaidByCustomer
+
+    FROM Orders O
+
+    INNER JOIN OrderDetails OD
+        ON O.OrderID = OD.OrderID
+
+    WHERE O.OrderStatus = N'Completed'
+      AND O.CampaignID = 1
+
+    GROUP BY
+        O.OrderID,
+        O.PlatformFee,
+        O.ShippingSubsidy,
+        O.ShippingFeePaidByCustomer
+),
+
+LineProfit AS
+(
+    SELECT
+        OD.OrderDetailID,
+        OD.PromotionID,
+
+        (
+            OD.Quantity * OD.UnitPrice
+            - OD.CustomerDiscountAmount
+            + OD.PlatformSubsidyAmount
+        ) AS LineNetRevenue,
+
+        OD.CostOfGoodsSold,
+        OD.GiftCost,
+
+        (
+            (
+                OD.Quantity * OD.UnitPrice
+                - OD.CustomerDiscountAmount
+                + OD.PlatformSubsidyAmount
+            )
+            / NULLIF(OT.OrderProductRevenue, 0)
+        )
+        * OT.PlatformFee
+        AS AllocatedPlatformFee,
+
+        (
+            (
+                OD.Quantity * OD.UnitPrice
+                - OD.CustomerDiscountAmount
+                + OD.PlatformSubsidyAmount
+            )
+            / NULLIF(OT.OrderProductRevenue, 0)
+        )
+        * OT.ShippingSubsidy
+        AS AllocatedShippingSubsidy,
+
+        (
+            (
+                OD.Quantity * OD.UnitPrice
+                - OD.CustomerDiscountAmount
+                + OD.PlatformSubsidyAmount
+            )
+            / NULLIF(OT.OrderProductRevenue, 0)
+        )
+        * OT.ShippingFeePaidByCustomer
+        AS AllocatedShippingRevenue
+
+    FROM OrderDetails OD
+
+    INNER JOIN OrderTotals OT
+        ON OD.OrderID = OT.OrderID
+)
+
+SELECT
+    P.PromotionID,
+    P.PromotionName,
+
+    CAST
+    (
+        SUM(LP.LineNetRevenue)
+        AS DECIMAL(14,2)
+    ) AS NetRevenue,
+
+    CAST
+    (
+        SUM
+        (
+            LP.LineNetRevenue
+            - LP.CostOfGoodsSold
+            - LP.GiftCost
+            - LP.AllocatedPlatformFee
+            - LP.AllocatedShippingSubsidy
+            + LP.AllocatedShippingRevenue
+        )
+        AS DECIMAL(14,2)
+    ) AS PromotionProfit,
+
+    CAST
+    (
+        SUM
+        (
+            LP.LineNetRevenue
+            - LP.CostOfGoodsSold
+            - LP.GiftCost
+            - LP.AllocatedPlatformFee
+            - LP.AllocatedShippingSubsidy
+            + LP.AllocatedShippingRevenue
+        )
+        * 100.0
+        / NULLIF(SUM(LP.LineNetRevenue),0)
+
+        AS DECIMAL(10,2)
+    ) AS PromotionProfitMarginPercent
+
+FROM LineProfit LP
+
+INNER JOIN Promotions P
+    ON LP.PromotionID = P.PromotionID
+
+GROUP BY
+    P.PromotionID,
+    P.PromotionName
+
+ORDER BY PromotionProfit DESC;
+GO
+
+
+/*====================================================================
+ QUERY 6: LIVESTREAM WITH THE HIGHEST CONVERSION RATE
+
+ View-to-order conversion rate =
+ Completed orders attributed to livestream
+ / Total livestream views * 100
+====================================================================*/
+
+SELECT
+    L.LivestreamID,
+    L.LiveDate,
+    C.ChannelName,
+    L.HostName,
+    L.TotalViews,
+    L.TotalClicks,
+
+    COUNT(DISTINCT O.OrderID) AS CompletedOrders,
+
+    CAST
+    (
+        COUNT(DISTINCT O.OrderID)
+        * 100.0
+        / NULLIF(L.TotalViews,0)
+
+        AS DECIMAL(10,4)
+    ) AS ViewToOrderConversionRatePercent,
+
+    CAST
+    (
+        COUNT(DISTINCT O.OrderID)
+        * 100.0
+        / NULLIF(L.TotalClicks,0)
+
+        AS DECIMAL(10,2)
+    ) AS ClickToOrderConversionRatePercent
+
+FROM Livestreams L
+
+INNER JOIN Channels C
+    ON L.ChannelID = C.ChannelID
+
+LEFT JOIN Orders O
+    ON L.LivestreamID = O.LivestreamID
+   AND O.OrderStatus = N'Completed'
+
+GROUP BY
+    L.LivestreamID,
+    L.LiveDate,
+    C.ChannelName,
+    L.HostName,
+    L.TotalViews,
+    L.TotalClicks
+
+ORDER BY
+    ViewToOrderConversionRatePercent DESC;
+GO
+
+
+/*====================================================================
+ QUERY 7: PERCENTAGE OF NEW CUSTOMERS
+
+ Definition:
+ A new customer registered during the campaign and placed at least
+ one completed campaign order.
+====================================================================*/
+
+WITH CampaignCustomers AS
+(
+    SELECT DISTINCT
+        C.CustomerID,
+        C.RegisterDate
+
+    FROM Customers C
+
+    INNER JOIN Orders O
+        ON C.CustomerID = O.CustomerID
+
+    WHERE O.OrderStatus = N'Completed'
+      AND O.CampaignID = 1
+)
+
+SELECT
+    COUNT(*) AS TotalPurchasingCustomers,
+
+    SUM
+    (
+        CASE
+            WHEN CC.RegisterDate BETWEEN CA.StartDate AND CA.EndDate
+            THEN 1
+            ELSE 0
+        END
+    ) AS NewCustomers,
+
+    CAST
+    (
+        SUM
+        (
+            CASE
+                WHEN CC.RegisterDate BETWEEN CA.StartDate AND CA.EndDate
+                THEN 1
+                ELSE 0
+            END
+        )
+        * 100.0
+        / NULLIF(COUNT(*),0)
+
+        AS DECIMAL(10,2)
+    ) AS NewCustomerPercent
+
+FROM CampaignCustomers CC
+
+CROSS JOIN Campaigns CA
+
+WHERE CA.CampaignID = 1
+
+GROUP BY
+    CA.StartDate,
+    CA.EndDate;
+GO
+
+
+/*====================================================================
+ QUERY 8: ROI BY SALES CHANNEL
+
+ Channel ROI =
+ Net Channel Profit
+ / Total Channel Campaign Cost
+ * 100
+
+ Direct campaign costs:
+ Assigned directly using CampaignCosts.ChannelID.
+
+ Shared campaign costs:
+ Allocated based on each channel's share of total campaign revenue.
+
+ Livestream costs:
+ Assigned directly to the corresponding channel.
+====================================================================*/
+
+WITH OrderEconomics AS
+(
+    SELECT
+        O.OrderID,
+        O.ChannelID,
+
+        SUM
+        (
+            OD.Quantity * OD.UnitPrice
+            - OD.CustomerDiscountAmount
+            + OD.PlatformSubsidyAmount
+        )
+        + O.ShippingFeePaidByCustomer
+        AS TotalRevenue,
+
+        SUM(OD.CostOfGoodsSold) AS COGS,
+
+        SUM(OD.GiftCost) AS GiftCost,
+
+        O.PlatformFee,
+        O.ShippingSubsidy,
+
+        SUM
+        (
+            OD.Quantity * OD.UnitPrice
+            - OD.CustomerDiscountAmount
+            + OD.PlatformSubsidyAmount
+            - OD.CostOfGoodsSold
+            - OD.GiftCost
+        )
+        - O.PlatformFee
+        - O.ShippingSubsidy
+        + O.ShippingFeePaidByCustomer
+        AS ProfitBeforeCampaignCost
+
+    FROM Orders O
+
+    INNER JOIN OrderDetails OD
+        ON O.OrderID = OD.OrderID
+
+    WHERE O.OrderStatus = N'Completed'
+      AND O.CampaignID = 1
+
+    GROUP BY
+        O.OrderID,
+        O.ChannelID,
+        O.PlatformFee,
+        O.ShippingSubsidy,
+        O.ShippingFeePaidByCustomer
+),
+
+ChannelPerformance AS
+(
+    SELECT
+        ChannelID,
+
+        SUM(TotalRevenue) AS ChannelRevenue,
+
+        SUM(COGS) AS ChannelCOGS,
+
+        SUM(GiftCost) AS ChannelGiftCost,
+
+        SUM(PlatformFee) AS ChannelPlatformFee,
+
+        SUM(ShippingSubsidy) AS ChannelShippingSubsidy,
+
+        SUM(ProfitBeforeCampaignCost)
+        AS ChannelProfitBeforeCampaignCost
+
+    FROM OrderEconomics
+
+    GROUP BY ChannelID
+),
+
+CampaignRevenue AS
+(
+    SELECT
+        SUM(ChannelRevenue) AS TotalCampaignRevenue
+
+    FROM ChannelPerformance
+),
+
+SharedCampaignCost AS
+(
+    SELECT
+        ISNULL(SUM(Amount),0) AS TotalSharedCampaignCost
+
+    FROM CampaignCosts
+
+    WHERE CampaignID = 1
+      AND ChannelID IS NULL
+),
+
+DirectChannelCost AS
+(
+    SELECT
+        ChannelID,
+        SUM(Amount) AS DirectCampaignCost
+
+    FROM CampaignCosts
+
+    WHERE CampaignID = 1
+      AND ChannelID IS NOT NULL
+
+    GROUP BY ChannelID
+),
+
+ChannelLivestreamCost AS
+(
+    SELECT
+        ChannelID,
+        SUM(LivestreamCost) AS LivestreamCost
+
+    FROM Livestreams
+
+    WHERE CampaignID = 1
+
+    GROUP BY ChannelID
+)
+
+SELECT
+    C.ChannelName,
+
+    CAST
+    (
+        CP.ChannelRevenue
+        AS DECIMAL(14,2)
+    ) AS ChannelRevenue,
+
+    CAST
+    (
+        CP.ChannelCOGS
+        AS DECIMAL(14,2)
+    ) AS COGS,
+
+    CAST
+    (
+        CP.ChannelGiftCost
+        AS DECIMAL(14,2)
+    ) AS GiftCost,
+
+    CAST
+    (
+        CP.ChannelPlatformFee
+        AS DECIMAL(14,2)
+    ) AS PlatformFee,
+
+    CAST
+    (
+        CP.ChannelShippingSubsidy
+        AS DECIMAL(14,2)
+    ) AS ShippingSubsidy,
+
+    CAST
+    (
+        CP.ChannelProfitBeforeCampaignCost
+        AS DECIMAL(14,2)
+    ) AS ProfitBeforeCampaignCost,
+
+    CAST
+    (
+        CP.ChannelRevenue
+        * 100.0
+        / NULLIF(CR.TotalCampaignRevenue,0)
+
+        AS DECIMAL(10,2)
+    ) AS RevenueSharePercent,
+
+    CAST
+    (
+        ISNULL(DCC.DirectCampaignCost,0)
+        AS DECIMAL(14,2)
+    ) AS DirectCampaignCost,
+
+    CAST
+    (
+        SCC.TotalSharedCampaignCost
+        * CP.ChannelRevenue
+        / NULLIF(CR.TotalCampaignRevenue,0)
+
+        AS DECIMAL(14,2)
+    ) AS AllocatedSharedCampaignCost,
+
+    CAST
+    (
+        ISNULL(CLC.LivestreamCost,0)
+        AS DECIMAL(14,2)
+    ) AS LivestreamCost,
+
+    CAST
+    (
+        ISNULL(DCC.DirectCampaignCost,0)
+
+        +
+
+        (
+            SCC.TotalSharedCampaignCost
+            * CP.ChannelRevenue
+            / NULLIF(CR.TotalCampaignRevenue,0)
+        )
+
+        +
+
+        ISNULL(CLC.LivestreamCost,0)
+
+        AS DECIMAL(14,2)
+    ) AS TotalChannelCampaignCost,
+
+    CAST
+    (
+        CP.ChannelProfitBeforeCampaignCost
+
+        -
+
+        ISNULL(DCC.DirectCampaignCost,0)
+
+        -
+
+        (
+            SCC.TotalSharedCampaignCost
+            * CP.ChannelRevenue
+            / NULLIF(CR.TotalCampaignRevenue,0)
+        )
+
+        -
+
+        ISNULL(CLC.LivestreamCost,0)
+
+        AS DECIMAL(14,2)
+    ) AS NetChannelProfit,
+
+    CAST
+    (
+        (
+            CP.ChannelProfitBeforeCampaignCost
+
+            -
+
+            ISNULL(DCC.DirectCampaignCost,0)
+
+            -
+
+            (
+                SCC.TotalSharedCampaignCost
+                * CP.ChannelRevenue
+                / NULLIF(CR.TotalCampaignRevenue,0)
+            )
+
+            -
+
+            ISNULL(CLC.LivestreamCost,0)
+        )
+
+        * 100.0
+
+        /
+
+        NULLIF
+        (
+            ISNULL(DCC.DirectCampaignCost,0)
+
+            +
+
+            (
+                SCC.TotalSharedCampaignCost
+                * CP.ChannelRevenue
+                / NULLIF(CR.TotalCampaignRevenue,0)
+            )
+
+            +
+
+            ISNULL(CLC.LivestreamCost,0),
+
+            0
+        )
+
+        AS DECIMAL(10,2)
+    ) AS ROI_Percent
+
+FROM ChannelPerformance CP
+
+INNER JOIN Channels C
+    ON CP.ChannelID = C.ChannelID
+
+CROSS JOIN CampaignRevenue CR
+
+CROSS JOIN SharedCampaignCost SCC
+
+LEFT JOIN DirectChannelCost DCC
+    ON CP.ChannelID = DCC.ChannelID
+
+LEFT JOIN ChannelLivestreamCost CLC
+    ON CP.ChannelID = CLC.ChannelID
+
+ORDER BY ROI_Percent DESC;
+GO
+
+
+/*====================================================================
+ QUERY 9: TOP 20 CUSTOMERS BY SPENDING
+====================================================================*/
+
+SELECT TOP 20
+    C.CustomerID,
+    C.CustomerName,
+    C.StateName,
+    C.CustomerSegment,
+
+    COUNT(DISTINCT O.OrderID) AS TotalOrders,
+
+    CAST
+    (
+        SUM
+        (
+            OD.Quantity * OD.UnitPrice
+            - OD.CustomerDiscountAmount
+            + OD.PlatformSubsidyAmount
+        )
+        AS DECIMAL(14,2)
+    ) AS TotalProductSpending,
+
+    SUM(OD.Quantity) AS TotalUnitsPurchased
+
+FROM Customers C
+
+INNER JOIN Orders O
+    ON C.CustomerID = O.CustomerID
+
+INNER JOIN OrderDetails OD
+    ON O.OrderID = OD.OrderID
+
+WHERE O.OrderStatus = N'Completed'
+  AND O.CampaignID = 1
+
+GROUP BY
+    C.CustomerID,
+    C.CustomerName,
+    C.StateName,
+    C.CustomerSegment
+
+ORDER BY TotalProductSpending DESC;
+GO
+
+
+/*====================================================================
+ QUERY 10: PROFIT MARGIN BY PRODUCT
+
+ Product-level variable costs include:
+ - COGS
+ - Gift cost
+ - Allocated platform fee
+ - Allocated shipping subsidy
+ - Allocated shipping revenue
+
+ Fixed campaign costs are NOT allocated to individual products.
+====================================================================*/
+
+WITH OrderTotals AS
+(
+    SELECT
+        O.OrderID,
+
+        SUM
+        (
+            OD.Quantity * OD.UnitPrice
+            - OD.CustomerDiscountAmount
+            + OD.PlatformSubsidyAmount
+        ) AS OrderProductRevenue,
+
+        O.PlatformFee,
+        O.ShippingSubsidy,
+        O.ShippingFeePaidByCustomer
+
+    FROM Orders O
+
+    INNER JOIN OrderDetails OD
+        ON O.OrderID = OD.OrderID
+
+    WHERE O.OrderStatus = N'Completed'
+      AND O.CampaignID = 1
+
+    GROUP BY
+        O.OrderID,
+        O.PlatformFee,
+        O.ShippingSubsidy,
+        O.ShippingFeePaidByCustomer
+),
+
+ProductLineProfit AS
+(
+    SELECT
+        OD.ProductID,
+        OD.Quantity,
+
+        (
+            OD.Quantity * OD.UnitPrice
+            - OD.CustomerDiscountAmount
+            + OD.PlatformSubsidyAmount
+        ) AS LineNetRevenue,
+
+        OD.CostOfGoodsSold,
+        OD.GiftCost,
+
+        (
+            (
+                OD.Quantity * OD.UnitPrice
+                - OD.CustomerDiscountAmount
+                + OD.PlatformSubsidyAmount
+            )
+            / NULLIF(OT.OrderProductRevenue,0)
+        )
+        * OT.PlatformFee
+        AS AllocatedPlatformFee,
+
+        (
+            (
+                OD.Quantity * OD.UnitPrice
+                - OD.CustomerDiscountAmount
+                + OD.PlatformSubsidyAmount
+            )
+            / NULLIF(OT.OrderProductRevenue,0)
+        )
+        * OT.ShippingSubsidy
+        AS AllocatedShippingSubsidy,
+
+        (
+            (
+                OD.Quantity * OD.UnitPrice
+                - OD.CustomerDiscountAmount
+                + OD.PlatformSubsidyAmount
+            )
+            / NULLIF(OT.OrderProductRevenue,0)
+        )
+        * OT.ShippingFeePaidByCustomer
+        AS AllocatedShippingRevenue
+
+    FROM OrderDetails OD
+
+    INNER JOIN OrderTotals OT
+        ON OD.OrderID = OT.OrderID
+)
+
+SELECT
+    P.ProductID,
+    P.ProductName,
+    P.BrandName,
+    C.CategoryName,
+
+    SUM(PLP.Quantity) AS TotalUnitsSold,
+
+    CAST
+    (
+        SUM(PLP.LineNetRevenue)
+        AS DECIMAL(14,2)
+    ) AS NetRevenue,
+
+    CAST
+    (
+        SUM(PLP.CostOfGoodsSold)
+        AS DECIMAL(14,2)
+    ) AS TotalCOGS,
+
+    CAST
+    (
+        SUM(PLP.GiftCost)
+        AS DECIMAL(14,2)
+    ) AS TotalGiftCost,
+
+    CAST
+    (
+        SUM(PLP.AllocatedPlatformFee)
+        AS DECIMAL(14,2)
+    ) AS AllocatedPlatformFee,
+
+    CAST
+    (
+        SUM
+        (
+            PLP.LineNetRevenue
+            - PLP.CostOfGoodsSold
+            - PLP.GiftCost
+            - PLP.AllocatedPlatformFee
+            - PLP.AllocatedShippingSubsidy
+            + PLP.AllocatedShippingRevenue
+        )
+        AS DECIMAL(14,2)
+    ) AS ProductProfit,
+
+    CAST
+    (
+        SUM
+        (
+            PLP.LineNetRevenue
+            - PLP.CostOfGoodsSold
+            - PLP.GiftCost
+            - PLP.AllocatedPlatformFee
+            - PLP.AllocatedShippingSubsidy
+            + PLP.AllocatedShippingRevenue
+        )
+
+        * 100.0
+
+        / NULLIF(SUM(PLP.LineNetRevenue),0)
+
+        AS DECIMAL(10,2)
+    ) AS ProfitMarginPercent
+
+FROM ProductLineProfit PLP
+
+INNER JOIN Products P
+    ON PLP.ProductID = P.ProductID
+
+INNER JOIN Categories C
+    ON P.CategoryID = C.CategoryID
+
+GROUP BY
+    P.ProductID,
+    P.ProductName,
+    P.BrandName,
+    C.CategoryName
+
+ORDER BY ProfitMarginPercent DESC;
+GO
+
+
+/*====================================================================
+ OPTIONAL FINAL CHECK:
+ TOTAL CAMPAIGN PROFITABILITY
+====================================================================*/
+
+WITH OrderEconomics AS
+(
+    SELECT
+        O.OrderID,
+
+        SUM
+        (
+            OD.Quantity * OD.UnitPrice
+            - OD.CustomerDiscountAmount
+            + OD.PlatformSubsidyAmount
+        )
+        + O.ShippingFeePaidByCustomer
+        AS TotalRevenue,
+
+        SUM
+        (
+            OD.Quantity * OD.UnitPrice
+            - OD.CustomerDiscountAmount
+            + OD.PlatformSubsidyAmount
+            - OD.CostOfGoodsSold
+            - OD.GiftCost
+        )
+        - O.PlatformFee
+        - O.ShippingSubsidy
+        + O.ShippingFeePaidByCustomer
+        AS ProfitBeforeCampaignCost
+
+    FROM Orders O
+
+    INNER JOIN OrderDetails OD
+        ON O.OrderID = OD.OrderID
+
+    WHERE O.OrderStatus = N'Completed'
+      AND O.CampaignID = 1
+
+    GROUP BY
+        O.OrderID,
+        O.PlatformFee,
+        O.ShippingSubsidy,
+        O.ShippingFeePaidByCustomer
+),
+
+CampaignInvestment AS
+(
+    SELECT
+
+        (
+            SELECT ISNULL(SUM(Amount),0)
+            FROM CampaignCosts
+            WHERE CampaignID = 1
+        )
+
+        +
+
+        (
+            SELECT ISNULL(SUM(LivestreamCost),0)
+            FROM Livestreams
+            WHERE CampaignID = 1
+        )
+
+        AS TotalCampaignInvestment
+)
+
+SELECT
+    CAST
+    (
+        SUM(OE.TotalRevenue)
+        AS DECIMAL(14,2)
+    ) AS TotalCampaignRevenue,
+
+    CAST
+    (
+        SUM(OE.ProfitBeforeCampaignCost)
+        AS DECIMAL(14,2)
+    ) AS ProfitBeforeCampaignCost,
+
+    CAST
+    (
+        CI.TotalCampaignInvestment
+        AS DECIMAL(14,2)
+    ) AS TotalCampaignInvestment,
+
+    CAST
+    (
+        SUM(OE.ProfitBeforeCampaignCost)
+        - CI.TotalCampaignInvestment
+        AS DECIMAL(14,2)
+    ) AS NetCampaignProfit,
+
+    CAST
+    (
+        (
+            SUM(OE.ProfitBeforeCampaignCost)
+            - CI.TotalCampaignInvestment
+        )
+        * 100.0
+        / NULLIF(CI.TotalCampaignInvestment,0)
+
+        AS DECIMAL(10,2)
+    ) AS TotalCampaignROI_Percent
+
+FROM OrderEconomics OE
+
+CROSS JOIN CampaignInvestment CI
+
+GROUP BY CI.TotalCampaignInvestment;
+GO
